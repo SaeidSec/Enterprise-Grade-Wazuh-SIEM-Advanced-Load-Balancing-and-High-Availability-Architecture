@@ -1,0 +1,41 @@
+vrrp_script chk_haproxy {
+    script "/usr/bin/killall -0 haproxy"  # Check if haproxy process is running
+    interval 2
+    weight 50
+    fall 2
+    rise 1
+}
+
+vrrp_script chk_nginx {
+    script "/usr/bin/killall -0 nginx"   # Check if nginx is NOT running
+    interval 2
+    weight -100                          # Heavy penalty if Nginx is running
+    fall 2
+    rise 1
+}
+
+vrrp_instance VI_WAZUH {
+    state BACKUP
+    interface ens33                      # Change to your network interface
+    virtual_router_id 51
+    priority 100                         # Lower priority = BACKUP
+    advert_int 1
+    authentication {
+        auth_type PASS
+        auth_pass wazuh_secure_789       # Must match MASTER password
+    }
+    
+    track_script {
+        chk_haproxy
+        chk_nginx
+    }
+    
+    virtual_ipaddress {
+        192.168.0.10/24                  # Same Virtual IP as MASTER
+    }
+    
+    # Optional: Notify scripts for logging
+    notify_master "/etc/keepalived/notify.sh MASTER"
+    notify_backup "/etc/keepalived/notify.sh BACKUP"
+    notify_fault "/etc/keepalived/notify.sh FAULT"
+}

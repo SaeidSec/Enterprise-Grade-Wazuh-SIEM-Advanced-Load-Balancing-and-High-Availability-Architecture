@@ -1,0 +1,123 @@
+user www-data;
+worker_processes auto;
+pid /run/nginx.pid;
+error_log /var/log/nginx/error.log;
+include /etc/nginx/modules-enabled/*.conf;
+
+events {
+    worker_connections 768;
+}
+
+stream {
+    # Upstreams - Load balance between Master and Worker
+    upstream wazuh_agents_tcp {
+        server 192.168.0.104:1514;    # Local Master
+        server 192.168.0.201:1514;    # Remote Worker
+    }
+
+    upstream wazuh_agents_udp {
+        server 192.168.0.104:1515;
+        server 192.168.0.201:1515;
+    }
+
+    upstream wazuh_api {
+        server 192.168.0.104:55000;   # Local Master API
+        server 192.168.0.201:55000;   # Remote Worker API
+    }
+
+    upstream wazuh_indexer {
+        server 192.168.0.200:9200;
+        server 192.168.0.203:9200;
+    }
+
+    upstream wazuh_dashboard {
+        server 192.168.0.202:443;
+    }
+
+    # Servers - Use DIFFERENT ports to avoid conflicts
+    server {
+        listen 15140;    # Changed from 1514 to 15140
+        proxy_pass wazuh_agents_tcp;
+        proxy_timeout 30s;
+        proxy_connect_timeout 5s;
+    }
+
+    server {
+        listen 15150 udp;  # Changed from 1515 to 15150
+        proxy_pass wazuh_agents_udp;
+        proxy_timeout 30s;
+        proxy_connect_timeout 5s;
+    }
+
+    server {
+        listen 55001;      # Changed from 55000 to 55001
+        proxy_pass wazuh_api;
+        proxy_timeout 30s;
+        proxy_connect_timeout 5s;
+    }
+
+    server {
+        listen 9201;       # Changed from 9200 to 9201
+        proxy_pass wazuh_indexer;
+        proxy_timeout 30s;
+        proxy_connect_timeout 5s;
+    }
+
+    server {
+        listen 8443;       # Changed from 443 to 8443
+        proxy_pass wazuh_dashboard;
+        proxy_timeout 30s;
+        proxy_connect_timeout 5s;
+    }
+}
+
+http {
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    types_hash_max_size 2048;
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+    
+    # NGINX Status page - BASIC
+    server {
+        listen 8080;
+        location /nginx_status {
+            stub_status;
+            allow 127.0.0.1;
+            allow 192.168.0.0/24;
+            deny all;
+        }
+    }
+    
+    # 🚀 BOOM DASHBOARD - ADVANCED MONITORING
+    server {
+        listen 8081;
+        server_name nginx-dashboard;
+        root /usr/share/nginx/html;
+        index index.html;
+        
+        # Basic Auth for security
+        auth_basic "NGINX Load Balancer Dashboard";
+        auth_basic_user_file /etc/nginx/.htpasswd;
+        
+        allow 192.168.0.0/24;
+        deny all;
+        
+        location / {
+            try_files $uri $uri/ =404;
+        }
+        
+        location /api/status {
+            stub_status;
+            access_log off;
+        }
+        
+        location /api/stream {
+            # Custom stream stats endpoint
+            add_header Content-Type text/plain;
+            return 200 "Stream Load Balancer Active\nPorts: 15140,15150,55001,9201,8443\n";
+        }
+    }
+}
